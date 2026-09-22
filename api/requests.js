@@ -77,40 +77,59 @@ export default async function handler(req, res) {
       created_at: new Date().toISOString(),
     };
 
-    if (supabase) {
-      try {
-        // Attempt 1: Insert into primary table "PLUMBING SOLUTION"
-        const { error: insertErr } = await supabase.from(primaryTable).insert([
+    if (!supabase) {
+      return res.status(500).json({
+        error: "Database configuration missing. Please verify Supabase environment variables.",
+      });
+    }
+
+    try {
+      // Attempt 1: Insert into primary table "PLUMBING SOLUTION"
+      const { data: insertedData, error: insertErr } = await supabase
+        .from(primaryTable)
+        .insert([
           {
             FullName: newRequest.full_name,
             MobileNumber: newRequest.mobile,
             Address: newRequest.address,
           },
+        ])
+        .select();
+
+      if (insertErr) {
+        console.warn(`[Vercel API] Insert to "${primaryTable}" error:`, insertErr.message);
+        // Attempt 2: Fallback table
+        const { error: fbErr } = await supabase.from(fallbackTable).insert([
+          {
+            full_name: newRequest.full_name,
+            address: newRequest.address,
+            mobile: newRequest.mobile,
+            work_details: newRequest.work_details,
+            created_at: newRequest.created_at,
+          },
         ]);
 
-        if (insertErr) {
-          console.warn(`[Vercel API] Insert to "${primaryTable}" error:`, insertErr.message);
-          // Attempt 2: Fallback table
-          await supabase.from(fallbackTable).insert([
-            {
-              full_name: newRequest.full_name,
-              address: newRequest.address,
-              mobile: newRequest.mobile,
-              work_details: newRequest.work_details,
-              created_at: newRequest.created_at,
-            },
-          ]);
+        if (fbErr) {
+          return res.status(500).json({
+            error: `Failed to insert request into Supabase: ${insertErr.message}`,
+          });
         }
-      } catch (sbErr) {
-        console.warn("[Vercel API] Supabase write error:", sbErr);
       }
-    }
 
-    return res.status(201).json({
-      success: true,
-      message: "Thank you! Your service request has been submitted successfully.",
-      data: newRequest,
-    });
+      return res.status(201).json({
+        success: true,
+        message: "Thank you! Your service request has been submitted successfully.",
+        data:
+          insertedData && insertedData[0]
+            ? { ...newRequest, id: String(insertedData[0].id) }
+            : newRequest,
+      });
+    } catch (sbErr) {
+      console.error("[Vercel API] Supabase write exception:", sbErr);
+      return res.status(500).json({
+        error: `Server error writing to Supabase: ${sbErr.message || String(sbErr)}`,
+      });
+    }
   }
 
   // GET: Fetch all service requests
