@@ -1,0 +1,86 @@
+import { createClient } from "@supabase/supabase-js";
+
+function sanitizeKey(val) {
+  if (!val) return "";
+  return String(val).trim().replace(/^["']|["']$/g, "").replace(/\s+/g, "");
+}
+
+function getSupabase() {
+  const rawUrl = process.env.SUPABASE_URL;
+  const rawServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const rawAnonKey = process.env.SUPABASE_ANON_KEY;
+
+  const url = rawUrl ? String(rawUrl).trim().replace(/^["']|["']$/g, "") : "";
+  const key = sanitizeKey(rawServiceKey) || sanitizeKey(rawAnonKey);
+
+  if (url && key) {
+    try {
+      return createClient(url, key, {
+        auth: { persistSession: false },
+      });
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  const primaryTable = process.env.SUPABASE_TABLE || "PLUMBING SOLUTION";
+  const supabase = getSupabase();
+
+  if (!supabase) {
+    return res.status(200).json({
+      configured: false,
+      connected: false,
+      mode: "local_json",
+      table: primaryTable,
+      message: "Supabase credentials not configured in Vercel environment variables.",
+    });
+  }
+
+  try {
+    const { count, error } = await supabase
+      .from(primaryTable)
+      .select("*", { count: "exact", head: true });
+
+    if (!error) {
+      return res.status(200).json({
+        configured: true,
+        connected: true,
+        mode: "supabase",
+        table: primaryTable,
+        count: count ?? 0,
+        message: `Successfully connected to Supabase table "${primaryTable}".`,
+      });
+    }
+
+    return res.status(200).json({
+      configured: true,
+      connected: false,
+      mode: "error",
+      table: primaryTable,
+      error: error.message,
+    });
+  } catch (err) {
+    return res.status(200).json({
+      configured: true,
+      connected: false,
+      mode: "error",
+      table: primaryTable,
+      error: err.message,
+    });
+  }
+}
